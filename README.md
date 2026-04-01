@@ -24,7 +24,7 @@
 - [Run locally](#run-locally)
 - [CI/CD pipelines](#cicd-pipelines)
 - [Secret scanning behavior](#secret-scanning-behavior)
-- [Maintaining the detect-secrets baseline](#maintaining-the-detect-secrets-baseline)
+- [Optional: `.secrets.baseline` for local use](#optional-secretsbaseline-for-local-use)
 - [Security and ethics](#security-and-ethics)
 
 ---
@@ -38,7 +38,7 @@ This repository is a **deliberately small but complete vertical slice** that sho
 1. Run a real HTTP service (**FastAPI**) behind **Nginx** in **Docker**.
 2. Describe the same stack with **Terraform** using the **Docker provider** (no cloud bill required—only a local Docker engine).
 3. Wire **GitHub Actions** so **build, test, IaC validation, and secret scanning** are separate, observable stages.
-4. Compare **two popular scanners**—**TruffleHog** (verification-oriented, rich detectors) and **Yelp detect-secrets** (baseline-driven static scan)—in **isolated workflows**, which mirrors how teams often adopt tools incrementally or satisfy different policy owners.
+4. Run **two scanners in parallel CI workflows**—**TruffleHog** (broad detectors, optional verification) and **Yelp detect-secrets** (plugin-based static scan)—each performing a **full-repository** pass with **no baseline allowlist** in Actions, so anything that looks like a leaked credential fails the job unless you remove or relocate the material.
 
 It is suitable as a **template**, **training repo**, or **proof of concept** for “secure SDLC” discussions.
 
@@ -71,8 +71,8 @@ All workflows live under `.github/workflows/` and use **least-privilege** `conte
 |---------------|----------------|
 | **`ci.yml`** | **Continuous integration**: checkout → Python 3.12 + pip cache → install `requirements-dev.txt` → **`pytest`** → **Docker Buildx** build of the app image (cache backed by **GitHub Actions cache**), **no registry push** (fits free-tier and lab use). |
 | **`terraform.yml`** | **IaC gate** (runs when `terraform/**` changes): **HashiCorp setup-terraform** → **`terraform fmt -check`** → **`terraform init -backend=false`** → **`terraform validate`**. Keeps modules syntactically correct without needing cloud credentials. |
-| **`trufflehog.yml`** | **Dedicated secret scan #1**: runs the official **TruffleHog** container against the workspace. Default runs **scope-limited** filesystem paths so routine pushes stay green; **manual dispatch** can scan the **entire repo** including demo fixtures. |
-| **`detect-secrets.yml`** | **Dedicated secret scan #2**: installs **Yelp detect-secrets** (pinned **1.5.0**) and runs **`detect-secrets scan`** against **`.secrets.baseline`**, with excludes for the baseline file and pytest cache—typical **baseline workflow** used in many Python codebases. |
+| **`trufflehog.yml`** | **Dedicated secret scan #1**: **TruffleHog** container runs **`filesystem .`** from the repo root with **`--fail`** and **GitHub Actions** annotations—**entire tree**, including **`samples/unsafe-fixtures/`**. |
+| **`detect-secrets.yml`** | **Dedicated secret scan #2**: **Yelp detect-secrets** (**1.5.0**) runs **`scan --all-files --force-use-all-plugins`** over the repo; if **`results`** is non-empty, the job **fails** and uploads **`detect_secrets_report.json`** as an artifact. Only **`.git/`**, caches, and **`.secrets.baseline`** (self-referential noise) are excluded from the scan path. |
 
 Together, this implements a **split pipeline** pattern: build/test and IaC validation do not run inside the same job graph as TruffleHog or detect-secrets, so failures are **easier to attribute** and **permissions can evolve independently** (for example, stricter rules on secret scanners later).
 
@@ -82,7 +82,7 @@ Together, this implements a **split pipeline** pattern: build/test and IaC valid
 |------|------|
 | **`samples/unsafe-fixtures/demo_database.yaml`** | Synthetic YAML resembling **database credentials**, **AWS-style keys** (including documented example-style material), **GitHub PAT-shaped** strings, **email/password** fields, **Stripe test key**, **Slack webhook** URL. |
 | **`samples/unsafe-fixtures/legacy_config.py`** | Same idea in Python constants: AWS-shaped keys, **GitLab**/**Azure DevOps**-style tokens, DB user/password, contact emails. |
-| **`.secrets.baseline`** | Serialized **detect-secrets** state for those fixtures so CI can enforce **“no new secrets beyond baseline”** on Linux (paths normalized to forward slashes). |
+| **`.secrets.baseline`** | Historical **detect-secrets** snapshot (optional). **CI no longer uses it for pass/fail**; keep it for local experiments or migrate to a baseline-based policy if you soften the pipeline later. |
 
 > These files exist **only** to exercise scanners and training scenarios. They must **never** hold real secrets.
 
@@ -108,8 +108,8 @@ flowchart LR
   U --> N
   N --> A
   CI --> A
-  TH -->|scan paths| Docker_host
-  DS -->|baseline scan| Docker_host
+  TH -->|full repo| Docker_host
+  DS -->|full repo| Docker_host
 ```
 
 **Runtime data path:** outside traffic hits **Nginx** on the host-mapped port; Nginx proxies to the **app** container. **Terraform** and **Compose** are two ways to create that same logical topology on a single machine.
@@ -198,21 +198,24 @@ Default **Nginx** host port is **8080** (see `terraform/variables.tf` and output
 
 ## Secret scanning behavior
 
+Both workflows are configured for **maximum coverage of the checked-out tree** (not a path allowlist). With the included **`samples/unsafe-fixtures/`** demo files, **expect both jobs to fail** until you delete those fixtures, move them out of the repo, or replace this policy with something softer (for example baseline-based detect-secrets or path excludes).
+
 ### TruffleHog (`trufflehog.yml`)
 
-- **Push / pull_request:** scans a **curated set of paths** (`app/`, `nginx/`, `terraform/`, `.github/`, `docker-compose.yml`, `README.md`) so the default branch is not permanently red because of intentional demo fixtures.
-- **workflow_dispatch** with **`include_demo_fixtures: true`:** scans **`.`** (entire repo), including **`samples/unsafe-fixtures/`**. Expect **findings and a failed job** if TruffleHog treats synthetic material as credentials—useful for demos and tabletop exercises.
+- **Triggers:** `push` / `pull_request` to `main`, plus **`workflow_dispatch`** for manual reruns.
+- **Command shape:** `trufflehog filesystem . --fail --no-update --github-actions` inside the official image, volume-mounted at the repository root (`fetch-depth: 0` checkout so git metadata is available if the tool consults it).
+- **Outcome:** any detector hit fails the workflow (exit per TruffleHog’s **`--fail`** semantics).
 
 ### Yelp detect-secrets (`detect-secrets.yml`)
 
-- Runs **`detect-secrets scan --baseline .secrets.baseline`** with **`--all-files`** and excludes for **`.secrets.baseline`** and **`.pytest_cache`**.
-- **New** secret-shaped content not reflected in the baseline will **fail** the workflow—this is the standard **shift-left** contract for baseline-based scanning.
+- **Scan:** `detect-secrets scan --all-files --force-use-all-plugins` over **`.`**, excluding **`.git/`**, **`.pytest_cache`**, **`__pycache__`**, and **`.secrets.baseline`** (that file’s hashed fields otherwise create circular noise).
+- **Outcome:** JSON report is written to **`detect_secrets_report.json`**; if **`results`** contains any file entries, the step **exits with code 1**. On failure, the workflow uploads **`detect-secrets-report`** as a **GitHub Actions artifact** for triage.
 
 ---
 
-## Maintaining the detect-secrets baseline
+## Optional: `.secrets.baseline` for local use
 
-When you intentionally change demo fixtures or add new allowlisted entries, regenerate the baseline (same version as CI for reproducibility):
+CI does **not** gate on the baseline anymore. You can still generate one for **local** pre-commit hooks or experiments:
 
 ```bash
 pip install "detect-secrets==1.5.0"
@@ -220,21 +223,15 @@ detect-secrets scan --all-files \
   --exclude-files '\.secrets\.baseline' \
   --exclude-files '\.pytest_cache' \
   --force-use-all-plugins > .secrets.baseline
+detect-secrets audit .secrets.baseline   # optional interactive review
 ```
-
-If your policy requires human review of each finding:
-
-```bash
-detect-secrets audit .secrets.baseline
-```
-
-Commit the updated `.secrets.baseline` on a branch and merge through your normal review process.
 
 ---
 
 ## Security and ethics
 
 - **Never** replace synthetic values in `samples/unsafe-fixtures/` with real API keys, passwords, or tokens.
+- A **strict full-repo scan** will stay red while deliberate “bad” fixtures remain in-tree; that is intentional if you want a **zero-tolerance** signal. For training-only content, use a **separate branch**, **submodule**, or **artifact** not scanned by CI.
 - This repo is a **lab**: production systems should combine secret scanning with **pre-commit hooks**, **private scanning** for monorepos, **vaults/KMS**, and **short-lived credentials**—this project illustrates **one slice** of that story (CI detection + dual tools), not the whole security program.
 
 ---

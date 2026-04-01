@@ -1,18 +1,12 @@
 name: TruffleHog
 
-# Secret scanning only (separate from CI build/test).
+# Full-repository filesystem scan (no path allowlists). Fails the job if TruffleHog reports findings.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      include_demo_fixtures:
-        description: "Scan samples/unsafe-fixtures (expected to alert; use for demos)"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -20,33 +14,19 @@ permissions:
 jobs:
   trufflehog:
     runs-on: ubuntu-latest
-    env:
-      INCLUDE_DEMO_FIXTURES: ${{ github.event.inputs.include_demo_fixtures }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: TruffleHog filesystem scan
+      - name: TruffleHog — full repo filesystem scan
         shell: bash
         run: |
           set -euo pipefail
           IMAGE="ghcr.io/trufflesecurity/trufflehog:latest"
-
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${INCLUDE_DEMO_FIXTURES}" = "true" ]; then
-            echo "Scanning entire repo including samples/unsafe-fixtures — job may fail on findings."
-            TARGET=(filesystem . --fail --no-update)
-          else
-            echo "Scanning app, infra, and workflows only (omit samples/unsafe-fixtures). Dispatch with include_demo_fixtures=true to scan everything."
-            TARGET=(
-              filesystem
-              app
-              nginx
-              terraform
-              .github
-              docker-compose.yml
-              README.md
-              --fail
-              --no-update
-            )
-          fi
-
-          docker run --rm -v "$PWD:/pwd" -w /pwd "$IMAGE" "${TARGET[@]}"
+          # Scan entire working tree from repo root; --fail exits non-zero on any detector hit.
+          docker run --rm -v "$PWD:/pwd" -w /pwd "$IMAGE" \
+            filesystem . \
+            --fail \
+            --no-update \
+            --github-actions
