@@ -65,7 +65,7 @@ It is suitable as a **template**, **training repo**, or **proof of concept** for
 
 ### CI/CD (GitHub Actions)
 
-All workflows live under `.github/workflows/` and use **least-privilege** `contents: read` where applicable.
+All workflows live under `.github/workflows/` and use **least-privilege** `contents: read` where applicable. First-party and Docker actions are pinned to current majors that run on **Node.js 24** (per GitHub’s runner deprecation timeline); **Dependabot** opens weekly PRs to refresh action tags.
 
 | Workflow file | What it does |
 |---------------|----------------|
@@ -137,6 +137,7 @@ flowchart LR
 ├── samples/
 │   └── unsafe-fixtures/          # synthetic “leaks” for demos only
 ├── .github/
+│   ├── dependabot.yml            # weekly GitHub Actions version bumps
 │   └── workflows/
 │       ├── ci.yml
 │       ├── terraform.yml
