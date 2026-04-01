@@ -1,6 +1,6 @@
 <div align="center">
 
-# TruffleHog Secret Scan Lab
+# Yelp and TruffleHog Secret Scan Lab
 
 **End-to-end reference for shipping a small API with Docker, Nginx, Terraform, and split CI/CD pipelines that treat secret scanning as a first-class gate.**
 
