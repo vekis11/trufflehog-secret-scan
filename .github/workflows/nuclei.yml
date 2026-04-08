@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          nuclei -disable-update -validate -t nuclei-templates/
+          nuclei -duc -validate -t nuclei-templates/
 
       - name: Start stack (nginx on 8080)
         run: docker compose up -d --wait
@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          nuclei -disable-update -u http://127.0.0.1:8080 \
+          nuclei -duc -u http://127.0.0.1:8080 \
             -t nuclei-templates/ci/ \
             -jsonl-export nuclei-smoke.jsonl -silent
           if ! [[ -s nuclei-smoke.jsonl ]]; then
