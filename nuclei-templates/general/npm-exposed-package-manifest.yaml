@@ -1,0 +1,49 @@
+# Detects npm project files accidentally served over HTTP. Exposed manifests disclose
+# exact dependency versions, making it easy to target known CVEs in open-source packages.
+# Remediation: stop serving these paths; run npm audit; bump vulnerable deps (npm update / overrides).
+id: npm-exposed-package-manifest
+
+info:
+  name: Exposed npm package.json or lockfile
+  author: trufflehog-secret-scan
+  severity: medium
+  description: |
+    The server returns what looks like an npm package.json or lockfile at a public URL.
+    Attackers use this for version fingerprinting before exploiting known issues in open-source
+    dependencies. Fix by tightening static file rules, then review lockfiles with npm audit
+    and upgrade affected packages (for example next, react, or transitive deps).
+  reference:
+    - https://docs.npmjs.com/cli/v10/commands/npm-audit
+    - https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/04-Review_Old_Backup_and_Unreferenced_Files_for_Sensitive_Information
+  metadata:
+    verified: true
+  tags: npm,exposure,supply-chain,misconfig,nodejs
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/package.json"
+      - "{{BaseURL}}/package-lock.json"
+      - "{{BaseURL}}/npm-shrinkwrap.json"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: regex
+        part: body
+        regex:
+          - "(?i)<!DOCTYPE\\s+html"
+          - "(?i)<html[\\s>]"
+        negative: true
+
+      - type: regex
+        part: body
+        regex:
+          - '"dependencies"\\s*:'
+          - '"devDependencies"\\s*:'
+          - '"lockfileVersion"\\s*:'
+          - '"packages"\\s*:\\s*\\{'
+        condition: or
