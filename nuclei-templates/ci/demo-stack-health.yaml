@@ -1,0 +1,24 @@
+# CI smoke: expects Docker Compose (nginx :8080 → app /health).
+id: demo-stack-health
+
+info:
+  name: Demo stack health endpoint
+  author: trufflehog-secret-scan
+  severity: info
+  description: Confirms the lab API health JSON is reachable via the published port.
+  tags: ci,smoke,health
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/health"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"status"'
+          - '"ok"'

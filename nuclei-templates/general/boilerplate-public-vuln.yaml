@@ -1,0 +1,31 @@
+# Copy this file, rename it, replace placeholders, and add a real advisory reference.
+# Run: nuclei -validate -t path/to/your-template.yaml
+id: boilerplate-public-vuln-http
+
+info:
+  name: Boilerplate — HTTP check for a public CVE/advisory (customize)
+  author: your-team
+  severity: info
+  description: |
+    Replace this description with the vulnerable condition, affected versions,
+    and what a positive match implies. Link the vendor advisory and CVE record.
+  reference:
+    - https://nvd.nist.gov/
+    - https://www.cve.org/
+  metadata:
+    verified: false
+  tags: template,boilerplate,cve
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/replace-with-vulnerable-path-or-use-raw"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "replace-with-unique-safe-indicator-from-advisory"

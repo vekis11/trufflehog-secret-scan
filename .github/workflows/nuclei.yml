@@ -1,0 +1,52 @@
+name: Nuclei
+
+# Validate custom templates and run a smoke scan against the local Compose stack.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NUCLEI_VERSION: "3.4.10"
+
+jobs:
+  nuclei:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Nuclei
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" -o nuclei.zip
+          unzip -q nuclei.zip nuclei
+          sudo install -m 0755 nuclei /usr/local/bin/nuclei
+          nuclei -version
+
+      - name: Validate templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          nuclei -disable-update -validate -t nuclei-templates/
+
+      - name: Start stack (nginx on 8080)
+        run: docker compose up -d --wait
+
+      - name: Smoke scan (expect health template to match)
+        shell: bash
+        run: |
+          set -euo pipefail
+          nuclei -disable-update -u http://127.0.0.1:8080 \
+            -t nuclei-templates/ci/ \
+            -jsonl-export nuclei-smoke.jsonl -silent
+          if ! [[ -s nuclei-smoke.jsonl ]]; then
+            echo "::error::Nuclei smoke scan produced no matches; expected demo-stack-health to fire."
+            exit 1
+          fi
+          echo "Nuclei smoke: OK ($(wc -l < nuclei-smoke.jsonl) result line(s))"
